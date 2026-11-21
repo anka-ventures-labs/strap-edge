@@ -20,6 +20,7 @@
 // metric_series each time.
 
 import '../data/activity_store.dart';
+import '../hub/hub_sync.dart';
 import '../sync/reset_gate.dart';
 import '../models/activity_suggestion.dart';
 import '../state/prefs.dart';
@@ -3789,6 +3790,7 @@ class DerivationEngine {
     void Function(int failedDays, String? error)? onOutcome,
   }) async {
     if (_running) return 0;
+    final hubSync = HubSync.pending;
     _running = true;
     _beginRetentionPass();
     beginWearableDayIndexPass();
@@ -4261,6 +4263,7 @@ class DerivationEngine {
       } finally {
         endWearableDayIndexPass();
         _running = false;
+        if (lastRunError == null) HubSync.afterDerive(hubSync);
         final finishedAt = DateTime.now().millisecondsSinceEpoch;
         _diag
           ..['running'] = false
