@@ -173,7 +173,7 @@ HubDigest _build(_Projection input) {
       'type': row['type'],
       for (final key in _workoutNumbers)
         if (row[key] case final num value when value.isFinite) key: value,
-      if (zones != null) 'zone_min': zones,
+      'zone_min': ?zones,
     };
     if (include('workout:${digestFingerprint(id)}', item) ||
         previouslySent[id] == true) {

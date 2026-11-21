@@ -65,3 +65,9 @@ Delivery logs omit the destination, bearer token, and payload.
 `test/hub/` contains SQLite FFI and mock transport tests for projection,
 incremental delivery, privacy revocation, authentication, and retries. Run
 `flutter analyze` and `flutter test test/hub` on a Flutter-equipped runner.
+
+## Backups
+
+The hub URL (`hub_push_url`) is on the backup denylist and the token lives only in
+secure storage (`kSecretsNotBackedUp`), so a restored backup never points the app at
+a hub. Connect the hub again on a new phone.
