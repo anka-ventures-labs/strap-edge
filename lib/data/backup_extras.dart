@@ -31,6 +31,8 @@ const Map<String, String> kPrefsNotBackedUp = {
       'a non-default one is reported for re-entry',
   'companion_url': 'a server address a restored file must not be able to set; '
       'it redirects announcements, updates and uploads',
+  'hub_push_url': 'a server address a restored file must not be able to set; '
+      'it decides where health digests are sent, and its token stays on this phone',
   'backup.folder': 'storage-access URI permission belongs to this phone',
   'backup.last_run_ms': 'status of this install\'s automatic backup',
   'backup.last_error': 'status of this install\'s automatic backup',
@@ -68,6 +70,8 @@ const Map<String, String> kSecretsNotBackedUp = {
       'pair the band again on this phone',
   'lib/ble/oura_link.dart': 'Oura pairing key is a credential; '
       'pair the ring again on this phone',
+  'lib/hub/hub_config.dart': 'strap-hub bearer token is a credential in secure '
+      'storage; connect the hub again on the new phone',
 };
 
 /// The app root reloads presentation controllers after AppState adopts prefs.

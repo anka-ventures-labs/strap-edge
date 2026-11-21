@@ -31,6 +31,7 @@ import '../ai/nightly_sweep.dart';
 import '../ai/reminder_plan.dart';
 import '../coach/coach_config.dart';
 import '../coach/coach_engine.dart';
+import '../hub/hub_push.dart';
 import '../models/app_status.dart';
 import '../ble/accessory_setup.dart';
 import '../ble/adapters/_registry.dart' show kBleHrs, kPolarPmd, kWhoopGen4;
@@ -1650,6 +1651,11 @@ class AppState extends ChangeNotifier {
       TelemetryService.instance.applyConsent(false);
       HealthUploader.instance.deviceId = null; // maybeUpload bails without one
       deviceId = '';
+      try {
+        await HubPush.instance.clearConfig();
+      } catch (_) {
+        _log('[reset] Hub configuration clear failed');
+      }
 
       String? backupCleanupError;
       try {

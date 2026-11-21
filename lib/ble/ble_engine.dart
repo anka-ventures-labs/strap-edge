@@ -45,8 +45,10 @@ import 'package:openstrap_protocol/openstrap_protocol.dart';
 
 import '../data/db.dart';
 import '../data/models.dart';
+import '../hub/hub_sync.dart';
 import '../platform/tasker_bridge.dart';
 import '../sync/paired_device.dart' show cleanDeviceLabel;
+import '../sync/reset_gate.dart';
 import '../sync/sync_policy.dart';
 import 'adapters/_registry.dart';
 import 'android_native_name.dart';
@@ -7926,6 +7928,8 @@ class BleEngine {
     } else if (m.sub == SyncMeta.historyComplete) {
       final d = _drain;
       if (d == null) return;
+      final resetGeneration = ResetGate.generation;
+      final ownedHistory = _offloadActive && !session.historyStuckActive;
       // After a Stuck abort the offload flag is already down by design — that
       // is not an out-of-band COMPLETE, so don't record it as one.
       if (!_offloadActive && !session.historyStuckActive) {
@@ -7957,6 +7961,9 @@ class BleEngine {
           lastError: 'durable_commit_failed',
           metaPatch: {'records_seen': d.records},
         ));
+      }
+      if (ownedHistory && tailDurable && onCommitBatch != null) {
+        HubSync.recordCompletion(linkDeviceFamily, resetGeneration);
       }
       d.onComplete();
       // Our task is over: a re-offered marker from here is not ours to

@@ -69,6 +69,7 @@ const _mustStay = {
   'consent_telemetry', 'consent_health_data', 'consent_chosen',
   'coach_api_key_present', 'coach_chatgpt_present', 'coach_chatgpt_client_id',
   'coach_chatgpt_host_id', 'coach_chatgpt_welcomed', 'coach_base_url', 'companion_url',
+  'hub_push_url',
   'backup.folder', 'backup.last_run_ms', 'backup.last_error', 'health_upload_last_ts',
   'alarm_schedule_cleared', 'alarm_epoch', 'alarm_epoch_confirmed', 'alarm_set_at_ms',
   'alarm_remote_id',
