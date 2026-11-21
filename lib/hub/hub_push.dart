@@ -12,6 +12,7 @@ import '../data/db.dart';
 import '../sync/reset_gate.dart';
 import 'digest.dart';
 import 'hub_config.dart';
+import 'hub_sequence.dart';
 
 enum HubPushResult { disabled, deferred, acknowledged, rejected, unauthorized }
 
@@ -23,11 +24,13 @@ class HubPush {
     Future<void> Function(Duration)? delay,
     Future<String> Function()? appVersion,
     void Function(String)? log,
+    HubSequence sequence = const HubSequence(),
   }) : _client = client ?? http.Client.new,
        _clock = clock ?? DateTime.now,
        _delay = delay ?? Future<void>.delayed,
        _appVersion = appVersion ?? _platformVersion,
-       _log = log ?? debugPrint;
+       _log = log ?? debugPrint,
+       _sequence = sequence;
 
   static final instance = HubPush();
   static const _stateKey = 'hub_digest_delivery_v1';
@@ -39,6 +42,7 @@ class HubPush {
   final Future<void> Function(Duration) _delay;
   final Future<String> Function() _appVersion;
   final void Function(String) _log;
+  final HubSequence _sequence;
   Future<void> _tail = Future.value();
   int _configGeneration = 0;
 
@@ -70,8 +74,8 @@ class HubPush {
     });
   }
 
-  /// The current database plus the acknowledged fingerprints are the outbox.
-  /// Rebuild each attempt so a workout made private since a failure stays local.
+  /// Rebuild the candidate from the current database so a workout made private
+  /// since an attempt stays local. The pending entry identifies identical retries.
   Future<HubPushResult> pushNow({String? generation}) {
     final configGen = _configGeneration, resetGen = ResetGate.generation;
     bool current() =>
@@ -136,14 +140,31 @@ class HubPush {
         ...previousWorkouts,
         for (final id in digest.revokedWorkouts) id: true,
       };
-      if (!mapEquals(previousWorkouts, attemptedWorkouts)) {
+      final previousPending = state.pending;
+      final _PendingDigest pending;
+      if (previousPending != null && previousPending.fingerprint == fingerprint) {
+        pending = previousPending;
+      } else {
+        pending = _PendingDigest(
+          await _sequence.reserve(),
+          fingerprint,
+          digest.body['sent_at'] as String,
+        );
+        if (!current()) return HubPushResult.deferred;
+      }
+      if (pending != previousPending ||
+          !mapEquals(previousWorkouts, attemptedWorkouts)) {
         // A lost 200 can hide either an upsert or a revocation. Record newly
-        // exposed IDs and possible tombstones before sending.
-        state = state.withSentWorkouts(attemptedWorkouts);
+        // exposed IDs, possible tombstones, and the digest identity before sending.
+        state = state.withAttempt(pending, attemptedWorkouts);
         await _save(destination, state);
         if (!current()) return HubPushResult.deferred;
       }
-      final status = await _send(config, digest.body);
+      final status = await _send(config, {
+        ...digest.body,
+        'seq': pending.seq,
+        'sent_at': pending.sentAt,
+      });
       if (!current()) return HubPushResult.deferred;
       if (status == 200) {
         await _save(destination, _DeliveryState(
@@ -154,7 +175,7 @@ class HubPush {
       if (status == 401) {
         await _save(destination, _DeliveryState(
           acknowledged: state.acknowledged, rejected: state.rejected,
-          sentWorkouts: previousWorkouts,
+          sentWorkouts: previousWorkouts, pending: pending,
         ));
         _log('[hub-push] Hub authorization failed (401)');
         return HubPushResult.unauthorized;
@@ -173,6 +194,7 @@ class HubPush {
         acknowledged: state.acknowledged,
         rejected: state.rejected,
         sentWorkouts: state.sentWorkouts,
+        pending: pending,
         failures: math.min(state.failures + 1, 9),
         retryAtMs: _clock().add(backoff).millisecondsSinceEpoch,
       );
@@ -216,6 +238,7 @@ class HubPush {
         'acknowledged': state.acknowledged,
         'rejected': state.rejected,
         'sent_workouts': state.sentWorkouts,
+        'pending': state.pending?.toJson(),
         'failures': state.failures,
         'retry_at_ms': state.retryAtMs,
       }));
@@ -226,6 +249,7 @@ class _DeliveryState {
     this.acknowledged,
     this.rejected,
     this.sentWorkouts = const {},
+    this.pending,
     this.failures = 0,
     this.retryAtMs = 0,
   });
@@ -235,13 +259,18 @@ class _DeliveryState {
   // IDs that may be on the hub. True means a revocation was attempted, so an
   // otherwise unchanged public session must be sent again to clear a tombstone.
   final Map<String, bool> sentWorkouts;
+  final _PendingDigest? pending;
   final int failures;
   final int retryAtMs;
 
-  _DeliveryState withSentWorkouts(Map<String, bool> ids) => _DeliveryState(
+  _DeliveryState withAttempt(
+    _PendingDigest digest,
+    Map<String, bool> ids,
+  ) => _DeliveryState(
     acknowledged: acknowledged,
     rejected: rejected,
     sentWorkouts: ids,
+    pending: digest,
     failures: failures,
     retryAtMs: retryAtMs,
   );
@@ -255,8 +284,32 @@ class _DeliveryState {
       acknowledged: cursor == null ? null : Map<String, String>.from(cursor),
       rejected: stored['rejected'] as String?,
       sentWorkouts: Map<String, bool>.from(stored['sent_workouts'] as Map),
+      pending: _PendingDigest.fromJson(stored['pending']),
       failures: math.min(9, math.max(0, stored['failures'] as int)),
       retryAtMs: stored['retry_at_ms'] as int,
     );
+  }
+}
+
+class _PendingDigest {
+  const _PendingDigest(this.seq, this.fingerprint, this.sentAt);
+
+  final int seq;
+  final String fingerprint;
+  final String sentAt;
+
+  Map<String, Object> toJson() => {
+    'seq': seq,
+    'fingerprint': fingerprint,
+    'sent_at': sentAt,
+  };
+
+  static _PendingDigest? fromJson(Object? raw) {
+    if (raw is! Map<String, dynamic>) return null;
+    final seq = raw['seq'], fingerprint = raw['fingerprint'], sentAt = raw['sent_at'];
+    if (seq is! int || seq < 1 || fingerprint is! String || sentAt is! String) {
+      return null;
+    }
+    return _PendingDigest(seq, fingerprint, sentAt);
   }
 }

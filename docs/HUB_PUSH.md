@@ -39,7 +39,14 @@ on the next push.
 
 One record in the existing SQLite `sync_cursor` table holds the destination
 fingerprint, acknowledged item fingerprints, retry deadline, and previously
-sent workout IDs. Payloads are rebuilt from the live database on each attempt.
+sent workout IDs. It also records the pending digest's content fingerprint,
+`seq`, and original `sent_at`. Edge rebuilds a candidate from the current
+database on each attempt. Matching content retries with the original sequence
+and timestamp. Changed content gets a higher sequence before it can be sent.
+A separate installation SQLite counter survives restarts, Hub configuration
+changes, Edge backup restores, and Delete Everything. The Hub uses the sequence
+to tell a later workout republication from an older delivery that arrives late.
+
 When a sent workout is made private or deleted, the next digest sends its ID
 in `revoked_workout_ids`. Workout IDs and attempted revocations are
 checkpointed before each POST so a lost response can be recovered. A workout

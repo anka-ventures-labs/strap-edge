@@ -7,6 +7,7 @@ import 'package:http/testing.dart';
 import 'package:openstrap_edge/data/day_label.dart';
 import 'package:openstrap_edge/data/db.dart';
 import 'package:openstrap_edge/hub/hub_push.dart';
+import 'package:openstrap_edge/hub/hub_sequence.dart';
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -17,6 +18,7 @@ void main() {
   const token = 'test-token';
   const ok = '{"accepted":{"days":1,"nights":0,"workouts":0},"freshness":null}';
   late String dbPath;
+  late String sequencePath;
   late Database db;
   late DateTime now;
   late String yesterday;
@@ -37,6 +39,7 @@ void main() {
     },
     appVersion: () async => '1.2.3',
     log: logs.add,
+    sequence: HubSequence(databasePath: sequencePath),
   );
 
   Map<String, dynamic> bodyOf(int index) =>
@@ -66,12 +69,15 @@ void main() {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
     LocalDb.dbName = 'openstrap_hub_push_test.db';
-    dbPath = p.join(await databaseFactory.getDatabasesPath(), LocalDb.dbName);
+    final directory = await databaseFactory.getDatabasesPath();
+    dbPath = p.join(directory, LocalDb.dbName);
+    sequencePath = p.join(directory, 'openstrap_hub_sequence_test.db');
   });
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({});
     await databaseFactory.deleteDatabase(dbPath);
+    await databaseFactory.deleteDatabase(sequencePath);
     db = await LocalDb.instance;
     now = DateTime(2026, 11, 21, 12);
     yesterday = dayLabelBefore(todayLabel(now), 1)!;
@@ -83,6 +89,7 @@ void main() {
   tearDown(() async {
     await LocalDb.close();
     await databaseFactory.deleteDatabase(dbPath);
+    await databaseFactory.deleteDatabase(sequencePath);
   });
 
   test('opt-in requires both fields and clear disables delivery', () async {
@@ -127,6 +134,8 @@ void main() {
     expect(await push.pushNow(), HubPushResult.deferred);
     expect(delays, [const Duration(seconds: 1)]);
     expect(requests, hasLength(2));
+    expect(bodyOf(0)['seq'], 1);
+    expect(requests[1].body, requests[0].body);
 
     final restarted = service();
     expect(await restarted.pushNow(), HubPushResult.deferred);
@@ -134,12 +143,14 @@ void main() {
     now = now.add(const Duration(seconds: 2));
     respond = () async => http.Response(ok, 200);
     expect(await restarted.pushNow(), HubPushResult.acknowledged);
+    expect(requests[2].body, requests[0].body);
     expect(bodyOf(2)['days'], [
       {'date': yesterday, 'metrics': {'steps': 120}},
       {'date': todayLabel(now), 'metrics': {}},
     ]);
 
     expect(await service().pushNow(), HubPushResult.acknowledged);
+    expect(bodyOf(3)['seq'], 2);
     expect(bodyOf(3)['days'], [
       {'date': todayLabel(now), 'metrics': {}},
     ]);
@@ -159,6 +170,7 @@ void main() {
     expect(bodyOf(0)['workouts'], hasLength(1));
     expect(bodyOf(1)['workouts'], isEmpty);
     expect(bodyOf(1)['revoked_workout_ids'], ['session-to-hide']);
+    expect(bodyOf(1)['seq'], greaterThan(bodyOf(0)['seq'] as int));
   });
 
   test('acknowledges revocations for both private and deleted sessions', () async {
@@ -200,6 +212,7 @@ void main() {
     expect(bodyOf(1)['revoked_workout_ids'], ['published']);
     expect(bodyOf(2).containsKey('revoked_workout_ids'), isFalse);
     expect(bodyOf(2)['workouts'], [containsPair('id', 'published')]);
+    expect(bodyOf(2)['seq'], greaterThan(bodyOf(1)['seq'] as int));
   });
 
   test('drops a permanent 4xx without advancing the acknowledged cursor', () async {
@@ -236,6 +249,7 @@ void main() {
     respond = () async => http.Response(ok, 200);
     expect(await push.pushNow(), HubPushResult.acknowledged);
     expect(bodyOf(1)['days'], bodyOf(0)['days']);
+    expect(bodyOf(1)['seq'], bodyOf(0)['seq']);
     expect(requests.last.headers['Authorization'], 'Bearer replacement-token');
   });
 
@@ -249,5 +263,20 @@ void main() {
     expect(await push.pushNow(), HubPushResult.acknowledged);
     expect(requests.last.url, Uri.parse('$replacement/v1/digest'));
     expect(bodyOf(1)['days'], bodyOf(0)['days']);
+    expect(bodyOf(1)['seq'], greaterThan(bodyOf(0)['seq'] as int));
+  });
+
+  test('clearing config and wiping health data preserve install sequence', () async {
+    final push = service();
+    await push.setConfig(url: url, token: token);
+    expect(await push.pushNow(), HubPushResult.acknowledged);
+    expect(bodyOf(0)['seq'], 1);
+
+    await push.clearConfig();
+    await LocalDb.wipeAll();
+    final restarted = service();
+    await restarted.setConfig(url: url, token: token);
+    expect(await restarted.pushNow(), HubPushResult.acknowledged);
+    expect(bodyOf(1)['seq'], 2);
   });
 }
